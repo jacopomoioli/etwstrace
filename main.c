@@ -10,21 +10,26 @@ typedef struct {
     char session_name[64];
 } ETW_SESSION_CONFIG;
 
+#pragma pack(push, 1)
+typedef struct {
+    ULONG ProcessId;
+    ULONG ThreadId;
+    ULONG64 StackBase;
+    ULONG64 StackLimit;
+    ULONG64 UserStackBase;
+    ULONG64 UserStackLimit;
+    ULONG64 StartAddr;
+    ULONG64 Win32StartAddr;
+    ULONG64 TebBase;
+    ULONG SubProcessTag;
+} THREAD_START_DATA;
+#pragma pack(pop)
+
 /*
- *  Windows Kernel Trace ETW producer GUID
+ *  Windows Kernel Process ETW producer GUID
  *  PS command to list all providers: logman query providers
  */
-static const GUID KERNEL_PROVIDER_GUID = {0x9e814aad, 0x3204, 0x11d2, {0x9a, 0x82, 0x00, 0x60, 0x08, 0xa8, 0x69, 0x39}};
-
-static const GUID KERNEL_AUDIT_API_CALLS_GUID = {0xe02a841c, 0x75a3, 0x4fa7, {0xaf, 0xc8, 0xae, 0x09, 0xcf, 0x9b, 0x7f, 0x23}}; // E02A841C-75A3-4FA7-AFC8-AE09CF9B7F23
-
 static const GUID KERNEL_PROCESS_PROVIDER_GUID = {0x22FB2CD6, 0x0E7B, 0x422B, {0xA0, 0xC7, 0x2F, 0xAD, 0x1F, 0xD0, 0xE7, 0x16}};
-
-/*
-*  Kernel provider system call keyword
-*  PS command to list all keyword of a provider: logman query providers "{9E814AAD-3204-11D2-9A82-006008A86939}"
- */
-static const int SYSCALL_KEYWORD = 0x0000000000000001;
 
 static ULONG target_pid;
 
@@ -34,21 +39,32 @@ void WINAPI event_callback(PEVENT_RECORD event_record) {
         return;
     }
 
-    printf(
-        "[+] Event ID: %d, PID: %lu, TID: %lu\n",
-        event_record->EventHeader.EventDescriptor.Id,
-        event_record->EventHeader.ProcessId,
-        event_record->EventHeader.ThreadId
-    );
-
-    
+    switch(event_record->EventHeader.EventDescriptor.Id){
+        case 7:
+        case 8:
+        case 9:
+        case 21:
+        case 5:
+        case 6:
+            return;
+        case 3:
+            // Thread start
+            THREAD_START_DATA* data = (THREAD_START_DATA*)event_record->UserData;
+            printf("[TID %lu] Thread start, created by TID %lu, executing 0x%llx\n", data->ThreadId, event_record->EventHeader.ThreadId, data->Win32StartAddr);
+            break;
+        case 4:
+            // Thread stop
+            printf("[TID %lu] Thread stop\n", event_record->EventHeader.ThreadId);
+            break;
+        default:
+            printf("[TID %lu] Unknown (Event %lu)\n", event_record->EventHeader.ThreadId, event_record->EventHeader.EventDescriptor.Id);
+    }
 }
 
 int main(int argc, char** argv){
     ETW_SESSION_CONFIG config = {0};
     TRACEHANDLE session_handle = 0;
 
-    // Get target pid from argv
     target_pid = atoi(argv[1]);
     
     // Session config setup
@@ -75,10 +91,10 @@ int main(int argc, char** argv){
     // Enable provider
     result = EnableTraceEx2(
         session_handle,
-        &KERNEL_AUDIT_API_CALLS_GUID,
+        &KERNEL_PROCESS_PROVIDER_GUID,
         EVENT_CONTROL_CODE_ENABLE_PROVIDER,
         TRACE_LEVEL_VERBOSE,
-        0xFFFFFFFFFFFFFFFF,
+        0xFFFFFFFFFFFFFFFF, // all keywords
         0,
         0,
         NULL
