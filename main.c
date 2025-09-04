@@ -26,22 +26,20 @@ typedef struct {
     ULONG64 Win32StartAddr;
     ULONG64 TebBase;
     ULONG SubProcessTag;
-} THREAD_START_DATA;
+} THREAD_START_DATA_STR;
 
 /* Windows kernel file provider*/
 static const GUID KERNEL_FILE_PROVIDER_GUID = {0xEDD08927, 0x9CC4, 0x4E65, {0xB9, 0x70, 0xC2, 0x56, 0x0F, 0xB5, 0xC2, 0x89}};
 
 typedef struct {
+    ULONG64 Offset;
     ULONG64 Irp;
-    ULONG64 FileObject;
-    ULONG ProcessId;
     ULONG ThreadId;
-    ULONG CreateOptions;
-    ULONG CreateDisposition;
-    ULONG FileAttributes;
-    ULONG ShareAccess;
-    ULONG64 FileName;
-} FILE_CREATE_DATA;
+    ULONG64 FileObject;
+    ULONG64 FileKey;
+    ULONG IoSize;
+    ULONG IoFlags;
+} FILE_WRITE_DATA_STR;
 
 static ULONG target_pid;
 
@@ -53,38 +51,44 @@ void WINAPI event_callback(PEVENT_RECORD event_record) {
     if(event_record->EventHeader.ProcessId != target_pid){
         return;
     }
-    if(compare_GUIDs(&event_record->EventHeader.ProviderId, &KERNEL_PROCESS_PROVIDER_GUID)){
-        switch(event_record->EventHeader.EventDescriptor.Id){
-            case 7:
-            case 8:
-            case 9:
-            case 21:
-            case 5:
-            case 6:
-                return;
-            case 3:
-                // Thread start
-                THREAD_START_DATA* data = (THREAD_START_DATA*)event_record->UserData;
-                printf("[TID %lu] Thread start, created by TID %lu, executing 0x%llx\n", data->ThreadId, event_record->EventHeader.ThreadId, data->Win32StartAddr);
-                break;
-            case 4:
-                // Thread stop
-                printf("[TID %lu] Thread stop\n", event_record->EventHeader.ThreadId);
-                break;
-            default:
-                printf("[TID %lu] Unknown (Event %lu)\n", event_record->EventHeader.ThreadId, event_record->EventHeader.EventDescriptor.Id);
-                break;
-        }
-    }else if(compare_GUIDs(&event_record->EventHeader.ProviderId, &KERNEL_FILE_PROVIDER_GUID)){
-        switch(event_record->EventHeader.EventDescriptor.Id){
-            case 12:
-                FILE_CREATE_DATA* data = (FILE_CREATE_DATA*)event_record->UserData;
-                printf("[TID %lu] Created file %s\n", event_record->EventHeader.ThreadId, data->FileName);
-                break;
-            default:
-                printf("[TID %lu] Unknown (Event %lu)\n", event_record->EventHeader.ThreadId, event_record->EventHeader.EventDescriptor.Id);
-                break;
-        }
+
+    int descriptor_id = event_record->EventHeader.EventDescriptor.Id;
+
+    switch(descriptor_id) {
+        case 5:
+        case 6:
+        case 7:
+        case 8:
+        case 9:
+        case 21:
+            return;
+            
+        case 3:
+            // Thread start
+            THREAD_START_DATA_STR* thread_start_data = (THREAD_START_DATA_STR*)event_record->UserData;
+            printf("[TID %lu] Thread start, created by TID %lu, executing 0x%llx\n", 
+                thread_start_data->ThreadId, 
+                event_record->EventHeader.ThreadId, 
+                thread_start_data->Win32StartAddr);
+            break;
+            
+        case 4:
+            // Thread stop
+            printf("[TID %lu] Thread stop\n", event_record->EventHeader.ThreadId);
+            break;
+            
+        case 16:
+            FILE_WRITE_DATA_STR* file_write_data = (FILE_WRITE_DATA_STR*)event_record->UserData;
+            printf("[TID %lu] Wrote %d bytes on file\n", 
+                event_record->EventHeader.ThreadId, 
+                file_write_data->IoSize);
+            break;
+            
+        default:
+            printf("[TID %lu] Unknown (Event %d)\n", 
+                event_record->EventHeader.ThreadId, 
+                event_record->EventHeader.EventDescriptor.Id);
+            break;
     }
 }
 
@@ -139,7 +143,7 @@ int main(int argc, char** argv){
         &KERNEL_FILE_PROVIDER_GUID,
         EVENT_CONTROL_CODE_ENABLE_PROVIDER,
         TRACE_LEVEL_VERBOSE,
-        0xFFFFFFFFFFFFFFFF, // all keywords
+        0x200, // KERNEL_FILE_KEYWORD_WRITE
         0,
         0,
         NULL
