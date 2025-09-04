@@ -5,12 +5,15 @@
 #include <evntprov.h>
 #include <tdh.h>
 
+/* ETW session configuration struct*/
 typedef struct {
     EVENT_TRACE_PROPERTIES properties;
     char session_name[64];
 } ETW_SESSION_CONFIG;
 
-#pragma pack(push, 1)
+/* Windows kernel process provider event data */
+
+/* ThreadStart (3) event data*/
 typedef struct {
     ULONG ProcessId;
     ULONG ThreadId;
@@ -23,7 +26,6 @@ typedef struct {
     ULONG64 TebBase;
     ULONG SubProcessTag;
 } THREAD_START_DATA;
-#pragma pack(pop)
 
 /*
  *  Windows Kernel Process ETW producer GUID
